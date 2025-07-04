@@ -94,8 +94,18 @@ static LLAMA_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("./thirdparty/llam
 fn compile_bindings(out_path: &Path) {
     println!("Generating bindings..");
     let mut bindings = bindgen::Builder::default()
-        .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
-        .header(LLAMA_PATH.join("llama.h").to_string_lossy())
+        .header(LLAMA_PATH.join("ggml/include/ggml.h").to_string_lossy())
+        .header(LLAMA_PATH.join("include/llama.h").to_string_lossy())
+        .clang_args(vec![
+            format!(
+                "-I{}",
+                LLAMA_PATH.join("ggml/include").to_string_lossy()
+            ),
+            format!(
+                "-I{}",
+                LLAMA_PATH.join("include").to_string_lossy()
+            ),
+        ])
         .derive_partialeq(true)
         .allowlist_function("ggml_.*")
         .allowlist_type("ggml_.*")
@@ -119,6 +129,8 @@ fn compile_bindings(out_path: &Path) {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+
+    println!("Generated bindings.rs at {}", out_path.display());
 }
 
 #[cfg(all(
@@ -595,15 +607,24 @@ fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
     lib_name
 }
 
-fn compile_ggml(mut cx: Build) {
+fn compile_ggml(mut cxx: Build) {
     println!("Compiling GGML..");
-    cx.std("c11")
-        .include(LLAMA_PATH.as_path())
-        .file(LLAMA_PATH.join("ggml.c"))
-        .file(LLAMA_PATH.join("ggml-alloc.c"))
-        .file(LLAMA_PATH.join("ggml-backend.c"))
-        .file(LLAMA_PATH.join("ggml-quants.c"))
+    let ggml_path = LLAMA_PATH.join("ggml");
+    let ggml_include_path = ggml_path.join("include");
+    let ggml_src_path = ggml_path.join("src");
+    
+    cxx.std("c++20")
+        .include(ggml_include_path.as_path())
+        .include(ggml_src_path.as_path())
+        .define("GGML_VERSION", "\"0.0.5822\"")
+        .define("GGML_COMMIT", "\"bee28421\"")
+        .file(ggml_src_path.join("ggml.c"))
+        .file(ggml_src_path.join("ggml-alloc.c"))
+        .file(ggml_src_path.join("ggml-backend.cpp"))
+        .file(ggml_src_path.join("ggml-quants.c"))
         .compile("ggml");
+
+    println!("GGML compiled successfully.");
 }
 
 fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
@@ -662,7 +683,9 @@ fn main() {
         None
     };
 
-    compile_ggml(cx);
+    println!("Starting compilation of GGML and Llama.cpp..");
+
+    compile_ggml(cxx.clone());
     compile_llama(cxx, &out_path);
 
     #[cfg(all(
